@@ -12,7 +12,7 @@ import {
   getModelSchemaRef, HttpErrors, param, patch, post, put, requestBody,
   response
 } from '@loopback/rest';
-import {Credenciales, Login, Usuario} from '../models';
+import {Credenciales, FactorDeAutenticacionPorCodigo, Login, Usuario} from '../models';
 import {LoginRepository, UsuarioRepository} from '../repositories';
 import {SeguridadUsuarioService} from '../services';
 
@@ -156,9 +156,7 @@ export class UsuarioController {
     await this.usuarioRepository.deleteById(id);
   }
 
-  /**
-   * Métodos personalizados para la API
-   */
+
 
   @post('/identificar-usuario')
   @response(200, {
@@ -179,6 +177,7 @@ export class UsuarioController {
     let usuario = await this.servicioSeguridad.identificarUsuario(credenciales);
     if (usuario) {
       let codigo2fa = this.servicioSeguridad.crearTextoAleatorio(5);
+      console.log(codigo2fa)
       let login: Login = new Login();
       login.usuarioId = usuario._id!;
       login.codigo2fa = codigo2fa;
@@ -186,9 +185,58 @@ export class UsuarioController {
       login.token = "";
       login.estadoToken = false;
       this.repositorioLogin.create(login);
+      usuario.clave = " ";
       // notificar al usuario via correo o sms
-      return usuario
+      return usuario;
     }
     return new HttpErrors[401]("Credenciales incorrectas.");
   }
+
+  /**
+   * Métodos personalizados para la API
+   */
+
+  @post('/verificar-2fa')
+  @response(200, {
+    descrption: "Validar un código de 2fa "
+  })
+  async verificarCodigo2fa(
+    @requestBody({
+      content: {
+        'application/json': {
+          schema: getModelSchemaRef(FactorDeAutenticacionPorCodigo)
+        }
+      }
+    })
+    credenciales: FactorDeAutenticacionPorCodigo
+  ): Promise<object> {
+    // como es promesa tambien usamos aqui el await
+    let usuario = await this.servicioSeguridad.validarCodigo2fa(credenciales);
+    if (usuario) {
+      let token = this.servicioSeguridad.crearToken(usuario);
+      if (usuario) {
+        usuario.clave = "";
+        try {
+          this.usuarioRepository.logins(usuario._id).patch(
+            {
+              estadoCodigo2fa: true,
+              token: token
+            },
+            {
+              estadoCodigo2fa: false
+            });
+        } catch {
+          console.log("No se ha almacenado el cambio del estado del token en la base de datos")
+        }
+        return {
+          user: usuario,
+          token: token
+        };
+      }
+
+    }
+    return new HttpErrors[401]("Código de 2fa inválido para el usuario definido.");
+
+  }
+
 }
